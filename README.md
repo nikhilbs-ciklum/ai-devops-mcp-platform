@@ -208,6 +208,8 @@ In-progress workflows are accepted only when completed failed jobs exist. The se
 validates API metadata, queries paginated jobs and the individual job-log API, not
 unfinished run-level logs. Log downloads retry three times, ten seconds apart. This path is unit-tested; live
 API availability during an in-progress run needs approval-gated GitHub verification.
+Job-log downloads explicitly allow terminal escape sequences in `gh api` output
+and strip them before evidence extraction; Gradle logs can contain ANSI formatting.
 
 Only timestamp-selected failing-step windows are excerpted (24,000 total characters),
 plus redacted commit patches (12,000 characters). Files named in logs are preferred;

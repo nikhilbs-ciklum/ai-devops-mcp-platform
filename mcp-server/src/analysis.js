@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 
@@ -220,7 +220,7 @@ export async function analyzeRun(config, runId, dependencies = {}) {
     let log;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        log = await runGh(["api", `repos/${config.repository}/actions/jobs/${job.id}/logs`]);
+        log = await runGh(["api", `repos/${config.repository}/actions/jobs/${job.id}/logs`, "--allow-escape-sequences"]);
         if (typeof log !== "string" || !log.trim()) throw new Error("Job logs are empty.");
         break;
       } catch {
@@ -237,7 +237,7 @@ export async function analyzeRun(config, runId, dependencies = {}) {
       missingEvidence.push(`Job ${job.id} logs exceed the 3 MB download analysis limit and were omitted.`);
       continue;
     }
-    const lines = log.replace(/^\uFEFF/, "").split(/\r?\n/);
+    const lines = stripVTControlCharacters(log).replace(/^\uFEFF/, "").split(/\r?\n/);
     originalLines += lines.length;
     for (const step of steps) {
       const start = Date.parse(step.started_at);
