@@ -6,7 +6,7 @@ import org.junit.Test
 class GreetingTest {
     @Test
     fun createsGreeting() {
-        assertEquals("Hello, Demo!", Greeting.message("Android"))
+        assertEquals("Hello, Android!", Greeting.message("Android"))
     }
 
     @Test

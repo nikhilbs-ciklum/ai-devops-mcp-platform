@@ -284,3 +284,22 @@ the analysis workflow explicitly; it does not produce a success-shaped report.
 Reports are retained for seven days and may contain private log excerpts/model
 output, so limit Actions access accordingly. This workflow does not analyze old runs
 merely because the variable was enabled.
+
+#### Verified live demo
+
+The approved temporary failure changed `createsGreeting` to expect `Hello, Demo!`
+while the app returned `Hello, Android!`. Full unit-test exception logging exposes
+both assertion values to the analyzer without changing test pass/fail behavior.
+
+- [Intentional failed Android run](https://github.com/nikhilbs-ciklum/ai-devops-mcp-platform/actions/runs/40304250076)
+- [Automatically triggered successful AI analysis](https://github.com/nikhilbs-ciklum/ai-devops-mcp-platform/actions/runs/40304449995)
+
+Open the analysis run's **Summary** to see the AI root cause, evidence, and suggested
+fixes. Under the `analyze` job, expand **Analyze failed Android run through MCP** to
+see the JSON response. The artifact `ai-failure-analysis-40304250076` contains both
+report formats (retained seven days).
+
+The model identified the expected-versus-actual mismatch. A human restored the
+original test expectation; remediation was not performed by the model. Automatic
+analysis was disabled after the demo using the repository variable. The Azure
+federated identity remains configured so the workflow can be enabled for later demos.
