@@ -206,8 +206,9 @@ The Node client starts the existing stdio MCP server and calls `analyze_failed_r
 with the current run ID. No new tools, Python client, hosting, or secrets are added.
 In-progress workflows are accepted only when completed failed jobs exist. The server
 validates API metadata, queries paginated jobs and the individual job-log API, not
-unfinished run-level logs. Log downloads retry three times, ten seconds apart. This path is unit-tested; live
-API availability during an in-progress run needs approval-gated GitHub verification.
+unfinished run-level logs. Log downloads retry three times, ten seconds apart.
+This path is unit-tested and was verified in the approved same-run live demo below.
+Log availability can still vary with permissions, retention, and GitHub service health.
 Job-log downloads explicitly allow terminal escape sequences in `gh api` output
 and strip them before evidence extraction; Gradle logs can contain ANSI formatting.
 
@@ -369,6 +370,32 @@ fallback step from executing. Highly unusual runs with many failed jobs/slow API
 hit these bounds. Only the first five failed jobs are examined; any omission is listed
 as missing evidence. Artifacts and summaries can still contain private code excerpts.
 Best-effort redaction does not guarantee removal of every secret format.
+
+#### Verified same-run live demo
+
+The approved live tests on October 26, 2026 verified:
+
+- [Green Android run](https://github.com/nikhilbs-ciklum/ai-devops-mcp-platform/actions/runs/40359883566):
+  Android build passed and the analysis job was skipped.
+- [Evidence-backed failed run](https://github.com/nikhilbs-ciklum/ai-devops-mcp-platform/actions/runs/40360965883):
+  the Android unit test failed, Azure OIDC and analysis succeeded, and the overall
+  run remained failed. The report records the same run ID with `status: in_progress`,
+  1,763 downloaded job-log lines, and an 8,131-character excerpt. Exact quoted
+  evidence identifies the greeting assertion mismatch at test line 9.
+  The `ai-failure-analysis-40360965883` artifact contains JSON and Markdown;
+  the client also appended the report to the analysis step's job summary.
+- [Fallback run](https://github.com/nikhilbs-ciklum/ai-devops-mcp-platform/actions/runs/40361478207):
+  a temporary nonexistent deployment variable caused HTTP 404. The fallback
+  summary step succeeded and the original Android build remained failed.
+  The original deployment variable was restored and independently checked.
+
+The first same-run attempt returned a metadata-only report because `gh api`
+refused Gradle terminal escape sequences. That attempt was not counted as success.
+The job-log download fix and a regression test were published before the
+evidence-backed run. No Azure trust or role changes were needed.
+These results verify the observed runs, not guaranteed future log availability
+or the correctness of every model recommendation. The temporary test expectation
+was restored after testing; no production application logic was changed.
 
 #### Historical post-run demo (before same-run conversion)
 
