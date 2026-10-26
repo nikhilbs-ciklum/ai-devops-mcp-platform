@@ -72,7 +72,7 @@ Configure branch protection/rulesets separately if required; use the
 The local stdio MCP server in [mcp-server](mcp-server) exposes two read-only tools:
 
 - `list_failed_runs`: list up to ten recent failed runs in the configured repository.
-- `analyze_failed_run`: fetch a completed failed run's failed-job logs and ask Azure
+- `analyze_failed_run`: fetch completed failed jobs (also in an in-progress run) and ask Azure
   OpenAI for root causes, quoted evidence, recommended fixes, and next steps.
 
 Interactive analysis works for existing failures. An optional develop-only automatic
@@ -137,8 +137,9 @@ it expects an MCP client on stdin; diagnostic output goes to stderr.
 ### Data handling and troubleshooting
 
 Failed logs are downloaded locally with `gh`; common token, password, authorization,
-and credential-in-URL patterns are redacted before excerpt selection. Only up to
-24,000 characters are sent to Azure. Error context and log line labels are retained;
+and credential-in-URL patterns are redacted before excerpt selection. Known token/key
+environment values are also removed literally. Up to 24,000 log characters plus
+12,000 commit-patch characters are sent to Azure. Error context and line labels are retained;
 truncation and excerpt counts are returned. The full raw log is not saved by this
 server. Redaction is best effort, **not a guarantee**: logs can contain private code
 or other sensitive content, so review the source logs and approve sending them.
@@ -148,7 +149,11 @@ Inference incurs Azure usage charges. Treat logs and model output as untrusted.
   inference role, and endpoint network restrictions. New RBAC grants can take time
   to propagate; retry after propagation.
 - HTTP 404: check the resource endpoint and exact deployment name.
-- HTTP 429: check model quota and retry later; automatic retries are not performed.
+- HTTP 429/408 or transient 5xx: Azure calls retry at most three times. Retry-After
+  waits are capped at ten seconds; check quota/service health if attempts are exhausted.
+- Network errors/timeouts: at most three attempts, with a 45-second timeout per request.
+  Retries can incur additional Azure usage if a response was lost after processing.
+- HTTP 401/403/404 and malformed model responses are not automatically retried.
 - Missing logs: check GitHub permissions and Actions log retention.
 - A tool error is returned explicitly; it is never replaced with a successful-looking
   synthetic analysis.
@@ -184,12 +189,49 @@ or run the documented CLI command for a historical failed run. No API key is nee
 
 ### Optional automatic analysis of failed develop builds
 
-[AI failure analysis](.github/workflows/ai-failure-analysis.yml) is a separate workflow
-triggered **after** `Android CI` completes. It only analyzes failed `push` or manual
-Android runs on `develop` in this repository; successful runs, PRs, and feature-branch
-runs are excluded. The workflow must be merged onto the default branch (`develop`)
-before GitHub can trigger it. It checks out trusted default-branch analyzer code,
-not the failed run's source, and never downloads or executes failed-build artifacts.
+[Android CI](.github/workflows/android.yml) calls the reusable
+[AI failure analysis](.github/workflows/ai-failure-analysis.yml) workflow as the
+`ai-failure-analysis` job in the **same run**. Its condition is
+`always() && !cancelled() && needs.build.result == 'failure'`. The existing `build`
+steps are unchanged. Successful, skipped, and cancelled builds skip analysis.
+The failed build stays failed; no `continue-on-error` masks it.
+
+The reusable YAML no longer has a `workflow_run` trigger. Only enabled push/manual
+builds on `develop` use Azure, matching existing OIDC trust. PRs (including forks),
+other refs, and disabled analysis produce a skip note without checkout, MCP, GitHub
+API queries, or Azure calls in the analysis workflow. OIDC permission is limited
+to the caller and analyzer, not the build.
+
+The Node client starts the existing stdio MCP server and calls `analyze_failed_run`
+with the current run ID. No new tools, Python client, hosting, or secrets are added.
+In-progress workflows are accepted only when completed failed jobs exist. The server
+validates API metadata, queries paginated jobs and the individual job-log API, not
+unfinished run-level logs. Log downloads retry three times, ten seconds apart. This path is unit-tested; live
+API availability during an in-progress run needs approval-gated GitHub verification.
+
+Only timestamp-selected failing-step windows are excerpted (24,000 total characters),
+plus redacted commit patches (12,000 characters). Files named in logs are preferred;
+otherwise up to five candidate changed files are included with an explicit limitation.
+The diff is the head commit's first-parent patch, not the entire PR. Missing/binary
+patches, truncation, and diff API failure are reported as missing evidence. Full source
+files and full job logs are not sent. Missing/unidentifiable step windows, failed
+downloads, and oversized logs are explicitly listed as missing evidence. Other usable
+jobs and diff evidence are retained; a metadata-only diagnosis is marked low confidence.
+Original job-log line numbers and timestamps are retained, including the complete
+final second of a failed step (the step API has second-level precision).
+
+The report includes run ID, failed job/step, summary, probable causes, quoted evidence,
+run URL, file/line or unavailable, fixes, next steps, confidence with its reason,
+and missing evidence. Model quotes not found exactly in the supplied log excerpt
+are removed and confidence is lowered. Exact quoting verifies the source of a
+statement, not the truth of the model's proposed root cause.
+Logs/diffs are untrusted data, never instructions; output is inert indented text.
+A separate fallback step writes **AI analysis unavailable** with the failed stage,
+even when no report file exists.
+
+The stable Azure API, `gpt-4.1-mini` default, temperature `0`, and Azure CLI/OIDC
+authentication are preserved. No reasoning-effort parameter is sent. Actions remain
+version-tagged, matching this repository's standard.
 
 The feature is **off by default**. You do not need to comment out YAML to hide it.
 Use **Settings > Secrets and variables > Actions > Variables**:
@@ -202,6 +244,13 @@ Use **Settings > Secrets and variables > Actions > Variables**:
 | `AZURE_TENANT_ID` | `9c8176a3-82ef-4e17-b391-373802f3d8d4` |
 | `AZURE_SUBSCRIPTION_ID` | `64e8b0c5-e7ed-450d-a62d-8dd37014c788` |
 | `AZURE_CLIENT_ID` | Client ID of the dedicated federated application below |
+| `AI_MAX_LOG_CHARS` (optional) | `1000` to `24000`; default `24000` |
+| `AI_MAX_DIFF_CHARS` (optional) | `1000` to `12000`; default `12000` |
+
+The evidence-limit variables can only reduce the hard caps. Invalid values fail
+explicitly before any evidence request. `gpt-4.1-mini` is selected by deployment
+name; the deployment's model version (expected `2025-04-14`) is managed in Azure and
+must be checked there. Local tests do not verify resource reachability or model version.
 
 Enabling the variable is the repository administrator's consent to send bounded,
 best-effort redacted failed-job excerpts to this Azure deployment. Review what your
@@ -274,18 +323,52 @@ It has no client secret and is restricted to this repository's `develop` subject
 3. Let an actual Android build fail on `develop` (push or manual run). Do not
    deliberately commit a broken build to shared `develop` without team approval.
    For a safe no-change demo, use the historical-run interactive MCP command instead.
-4. Open **Actions > AI failure analysis** after the Android run finishes.
+4. Open the same **Actions > Android CI** run and select `ai-failure-analysis / analyze`.
 5. Show the **Summary** diagnosis/evidence and download the
    `ai-failure-analysis-<run-id>` artifact containing `analysis.md` and `analysis.json`.
 6. Set the enable variable back to `false`.
 
 The original Android run stays failed. An analyzer/configuration failure also fails
-the analysis workflow explicitly; it does not produce a success-shaped report.
+the analysis job explicitly; it does not produce a success-shaped report.
 Reports are retained for seven days and may contain private log excerpts/model
 output, so limit Actions access accordingly. This workflow does not analyze old runs
 merely because the variable was enabled.
 
-#### Verified live demo
+#### Local and approval-gated end-to-end verification
+
+Run `npm test` from `mcp-server` and actionlint against the workflow YAML files.
+Tests cover actual workflow gate expressions, MCP stdio, malformed GitHub/model
+responses, evidence limits, redaction, partial evidence, retries, and safe reports.
+The actual fallback Bash script is executed locally when Bash is installed (Git
+Bash on Windows); otherwise that shell test is explicitly skipped and runs on Linux CI.
+Tests do not call Azure or rerun pipelines.
+
+After reviewing and approving publication and pipeline execution:
+
+1. **Green:** run Android CI on `develop`; `ai-failure-analysis` must be skipped.
+   No MCP process or Azure login should execute.
+2. **Failure:** enable the variable and introduce an approved temporary Kotlin test
+   failure. The build fails while `ai-failure-analysis / analyze` runs in the same
+   run ID. Check summary, evidence, and JSON/Markdown artifacts. Confirm completed
+   job logs can be fetched while the overall run is still in progress.
+3. **Analyzer failure:** test an approved invalid deployment/configuration. The
+   fallback note must identify the failed stage, and the build must remain failed.
+4. **Fork PR:** a failed fork build gets only a skip note; no Azure login or evidence
+   API queries should execute in the analysis workflow.
+5. Restore intentional errors and configuration, verify green, then disable the
+   switch. These steps require approval; they are not part of local validation.
+
+No API-key secrets are required by this OIDC integration. The repository variables
+above retain their exact names. Do not broaden Azure trust to PRs.
+
+The ten-minute job timeout and eight-minute MCP timeout bound the overall attempt.
+An infrastructure failure, runner termination, or cancellation may prevent the final
+fallback step from executing. Highly unusual runs with many failed jobs/slow APIs can
+hit these bounds. Only the first five failed jobs are examined; any omission is listed
+as missing evidence. Artifacts and summaries can still contain private code excerpts.
+Best-effort redaction does not guarantee removal of every secret format.
+
+#### Historical post-run demo (before same-run conversion)
 
 The approved temporary failure changed `createsGreeting` to expect `Hello, Demo!`
 while the app returned `Hello, Android!`. Full unit-test exception logging exposes

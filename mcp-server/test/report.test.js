@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { formatReport, saveReport } from "../src/report.js";
 
 const result = {
-  run: { databaseId: 123 },
+  run: { databaseId: 123, url: "https://github.com/example/repo/actions/runs/123" },
+  failedJobs: [{ name: "build", steps: [{ name: "test", number: 7 }] }],
   deployment: "gpt-4.1-mini",
   excerpt: { charactersSent: 200, truncated: false },
   analysis: {
@@ -16,8 +17,12 @@ const result = {
       evidence: ["L10: package not found\n<script>alert(1)</script>\n[click](https://example.com)"],
       recommendedFix: "Use explicit packages.",
       confidence: "high",
+      confidenceReason: "The exact failed-step message identifies the missing package.",
+      file: "GreetingTest.kt",
+      line: 9,
     }],
     nextSteps: ["Rerun lint."],
+    missingEvidence: ["Diff truncated."],
   },
 };
 
@@ -28,6 +33,12 @@ test("renders model content as inert code and preserves evidence", () => {
   assert.match(report, /    \[click\]/);
   assert.match(report, /    Evidence: L10:/);
   assert.match(report, /not verified fixes/);
+  assert.match(report, /Failed job: build/);
+  assert.match(report, /Failed step: test/);
+  assert.match(report, /GreetingTest.kt:9/);
+  assert.match(report, /Diff truncated/);
+  assert.match(report, /Run URL: https:\/\/github.com/);
+  assert.match(report, /Confidence reason: The exact/);
   assert.throws(() => formatReport({ ...result, analysis: {} }));
 });
 

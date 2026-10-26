@@ -9,6 +9,7 @@ on:
       - 'mcp-server/**'
       - '.github/workflows/mcp.yml'
       - '.github/workflows/ai-failure-analysis.yml'
+      - '.github/workflows/android.yml'
   pull_request:
     branches:
       - develop
@@ -16,6 +17,7 @@ on:
       - 'mcp-server/**'
       - '.github/workflows/mcp.yml'
       - '.github/workflows/ai-failure-analysis.yml'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 permissions:
