@@ -160,6 +160,28 @@ test("recovers when completed job logs become available on the third request", a
   assert.equal(result.run.databaseId, 123);
 });
 
+test("job log download allows terminal escapes but removes them before model evidence", async () => {
+  const base = mockGithub({
+    log: "2026-10-26T10:00:01Z \u001b[31mError: failure\u001b[0m",
+  });
+  let downloaded = false;
+  await analyzeRun(config, 123, {
+    github: async (args) => {
+      if (args[1]?.endsWith("/logs")) {
+        assert.ok(args.includes("--allow-escape-sequences"));
+        downloaded = true;
+      }
+      return base(args);
+    },
+    analyze: async (_config, _run, evidence) => {
+      assert.match(evidence.logExcerpt, /L1: .*Error: failure/);
+      assert.ok(!evidence.logExcerpt.includes("\u001b"));
+      return validAnalysis;
+    },
+  });
+  assert.equal(downloaded, true);
+});
+
 test("redacts opaque configured token values before sending evidence", () => {
   const previous = process.env.AZURE_OPENAI_API_KEY;
   process.env.AZURE_OPENAI_API_KEY = "opaque-example-value";
