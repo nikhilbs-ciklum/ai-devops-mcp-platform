@@ -232,7 +232,7 @@ if ($LASTEXITCODE -ne 0) { throw "Service principal creation failed" }
 $federation = @{
     name = "github-develop"
     issuer = "https://token.actions.githubusercontent.com"
-    subject = "repo:nikhilbs-ciklum/ai-devops-mcp-platform:ref:refs/heads/develop"
+    subject = "repo:nikhilbs-ciklum@182882634/ai-devops-mcp-platform@1434118245:ref:refs/heads/develop"
     audiences = @("api://AzureADTokenExchange")
 } | ConvertTo-Json
 $credentialFile = Join-Path $env:TEMP "ai-pipeline-federation.json"
@@ -258,6 +258,14 @@ arbitrary branches. The identity receives resource-scoped inference permission, 
 subscription Contributor/Owner. `azure/login` allows login without subscription
 visibility because only inference access is required. Wait for role propagation
 before enabling the feature.
+
+This repository's observed GitHub OIDC subject includes immutable owner/repository
+IDs, as shown above. For another repository, match the exact `subject claim` printed
+by `azure/login`; older configurations can use a name-only subject. A mismatch causes
+`AADSTS700213`. Never broaden the trust rule to work around a subject mismatch.
+
+The configured demo application client ID is `22bbcaf1-3c92-416d-9825-d13beb9fc461`.
+It has no client secret and is restricted to this repository's `develop` subject.
 
 #### Presenting the automatic demo
 
