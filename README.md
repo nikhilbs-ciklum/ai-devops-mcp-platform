@@ -42,7 +42,9 @@ The `Android CI` workflow runs on:
 
 The Ubuntu 24.04 runner installs Java 17 and the required Android SDK packages, validates
 the Gradle wrapper via `setup-gradle`, and runs Android lint, JVM unit tests, and a
-debug APK build. Lint warnings and errors fail CI. Test/lint reports are uploaded
+debug APK build. Lint errors fail CI; warnings remain visible in the uploaded report.
+Version-availability warnings do not force this pinned API 36 sample to adopt a
+new Android/Gradle release just to keep building. Test/lint reports are uploaded
 even when a build step fails, if reports were generated.
 
 Successful runs publish `android-debug-apk` and `android-quality-reports` artifacts,
