@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Android Pipeline Sample</string>
+    <string name="greeting_target">Android</string>
+</resources>
