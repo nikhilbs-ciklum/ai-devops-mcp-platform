@@ -40,7 +40,7 @@ The `Android CI` workflow runs on:
 - Pull requests targeting `main` or `develop`.
 - Manual dispatch from the Actions tab after the workflow is on the default branch.
 
-The Ubuntu runner installs Java 17 and the required Android SDK packages, validates
+The Ubuntu 24.04 runner installs Java 17 and the required Android SDK packages, validates
 the Gradle wrapper via `setup-gradle`, and runs Android lint, JVM unit tests, and a
 debug APK build. Lint warnings and errors fail CI. Test/lint reports are uploaded
 even when a build step fails, if reports were generated.
