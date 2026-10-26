@@ -12,7 +12,7 @@ The app displays "Hello, Android!" and has three JVM unit tests for greeting log
 
 ### Build locally
 
-Requirements: JDK 17 and an Android SDK with Android API 35 and Build Tools 35.0.0.
+Requirements: JDK 17 and an Android SDK with Android API 36 and Build Tools 35.0.0.
 Set `ANDROID_HOME` to your SDK directory, or configure `sdk.dir` in an untracked
 `local.properties` file. Android Studio can also open and sync the repository.
 
@@ -28,9 +28,9 @@ Linux/macOS:
 ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug
 ```
 
-Gradle 8.11.1 is downloaded by the checked-in wrapper and verified with SHA-256.
-The project uses Android Gradle Plugin 8.9.2 and Kotlin 2.1.20, supports Android
-6.0/API 23 and newer, and compiles/targets API 35.
+Gradle 8.13 is downloaded by the checked-in wrapper and verified with SHA-256.
+The project uses Android Gradle Plugin 8.13.2 and Kotlin 2.1.20, supports Android
+6.0/API 23 and newer, and compiles/targets API 36.
 
 ### GitHub Actions
 
