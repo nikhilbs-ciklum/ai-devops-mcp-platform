@@ -3,12 +3,10 @@ name: Android CI
 on:
   push:
     branches:
-      - main
       - develop
       - 'feature/**'
   pull_request:
     branches:
-      - main
       - develop
   workflow_dispatch:
 
@@ -43,7 +41,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6.4.0
         with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
+          cache-read-only: ${{ github.ref != 'refs/heads/develop' }}
 
       - name: Build, lint, and test
         run: ./gradlew --no-daemon --stacktrace lintDebug testDebugUnitTest assembleDebug

@@ -7,3 +7,7 @@ local.properties
 .DS_Store
 *.jks
 *.keystore
+node_modules/
+.env
+.env.*
+!.env.example

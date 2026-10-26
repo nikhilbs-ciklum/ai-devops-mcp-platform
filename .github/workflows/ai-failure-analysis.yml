@@ -1,0 +1,93 @@
+name: AI failure analysis
+
+on:
+  workflow_run:
+    workflows: ['Android CI']
+    types: [completed]
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-analysis-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    if: >-
+      vars.AI_FAILURE_ANALYSIS_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'develop' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
+      FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Check out trusted default-branch analyzer
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate Azure configuration
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_OPENAI_ENDPOINT AZURE_OPENAI_DEPLOYMENT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository variable: $name"
+              exit 1
+            fi
+          done
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - name: Install MCP dependencies
+        working-directory: mcp-server
+        run: npm ci --ignore-scripts
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      - name: Analyze failed Android run through MCP
+        working-directory: mcp-server
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node src/analyze.js "$FAILED_RUN_ID" --allow-azure-log-upload --output "$RUNNER_TEMP/ai-analysis"
+
+      - name: Upload AI analysis
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ai-failure-analysis-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/ai-analysis/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report analyzer failure
+        if: failure()
+        shell: bash
+        run: |
+          echo '### AI analysis failed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No successful AI report was produced. Inspect this workflow for configuration, authentication, log-access, or model errors. The original Android run remains failed.' >> "$GITHUB_STEP_SUMMARY"

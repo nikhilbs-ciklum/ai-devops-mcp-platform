@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "pipeline-analysis": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/mcp-server/src/server.js"],
+      "env": {
+        "GITHUB_REPOSITORY": "nikhilbs-ciklum/ai-devops-mcp-platform",
+        "AZURE_OPENAI_ENDPOINT": "https://ai-pipeline-analysis-nbs.openai.azure.com/",
+        "AZURE_OPENAI_DEPLOYMENT": "gpt-4.1-mini"
+      }
+    }
+  }
+}

@@ -36,8 +36,8 @@ The project uses Android Gradle Plugin 8.13.2 and Kotlin 2.1.20, supports Androi
 
 The `Android CI` workflow runs on:
 
-- Pushes to `main`, `develop`, and `feature/**`.
-- Pull requests targeting `main` or `develop`.
+- Pushes to `develop` and `feature/**`.
+- Pull requests targeting `develop`.
 - Manual dispatch from the Actions tab after the workflow is on the default branch.
 
 The Ubuntu 24.04 runner installs Java 17 and the required Android SDK packages, validates
@@ -58,11 +58,221 @@ quota and billing settings.
 ### Branch flow
 
 ```text
-feature/android-pipeline -> develop -> main
+feature/<change-name> -> develop
 ```
 
 Create feature branches from `develop` and open pull requests back into `develop`.
-After validation, open a separate promotion PR from `develop` to `main`.
+`develop` is the default branch; the remote `main` branch has been removed.
 This sample does not automatically merge or push changes between branches.
 Configure branch protection/rulesets separately if required; use the
 `Build, lint, and unit tests` check as a required check.
+
+## Azure-powered pipeline failure analysis (MCP)
+
+The local stdio MCP server in [mcp-server](mcp-server) exposes two read-only tools:
+
+- `list_failed_runs`: list up to ten recent failed runs in the configured repository.
+- `analyze_failed_run`: fetch a completed failed run's failed-job logs and ask Azure
+  OpenAI for root causes, quoted evidence, recommended fixes, and next steps.
+
+Interactive analysis works for existing failures. An optional develop-only automatic
+workflow is described below. Neither mode edits code, merges branches, reruns jobs, or executes model-generated
+commands. AI output is a suggestion, not proof that a fix works.
+
+### Prerequisites and authentication
+
+- Node.js 22+, GitHub CLI (`gh`), and Azure CLI (`az`) on PATH.
+- Run `gh auth login` with read access to this repository and its Actions logs.
+- Run `az login` with an account authorized for your Azure OpenAI resource's tenant.
+- The account needs **Cognitive Services OpenAI User** at the resource scope (or
+  equivalent inference permission). Subscription Contributor alone is not enough.
+- Network access to GitHub and the Azure OpenAI endpoint.
+
+No API keys are used or stored. Never paste keys into chat or commit credentials.
+If a key is exposed, regenerate it in Azure Portal under **Keys and Endpoint**.
+
+From the repository root:
+
+```powershell
+Set-Location .\mcp-server
+npm ci
+npm test
+```
+
+### Use from VS Code
+
+[.vscode/mcp.json](.vscode/mcp.json) registers `pipeline-analysis` using the resource
+root endpoint `https://ai-pipeline-analysis-nbs.openai.azure.com/` and deployment
+`gpt-4.1-mini`. These are non-secret settings. For another resource, change the
+endpoint and deployment in that configuration; do not include a chat-completions path.
+The server uses the stable Azure OpenAI `2024-10-21` API for chat completions and
+structured output; the deployment's portal URL may instead show a preview API.
+
+Open this repository root as the VS Code workspace. Run **MCP: List Servers** from
+the Command Palette, select **pipeline-analysis**, and start it (approve workspace
+trust if prompted). Enable its tools in an Agent chat and request:
+
+> List the previous failed Android CI runs. Analyze run 40295005416 using Azure.
+> I consent to sending its redacted log excerpts to my Azure OpenAI deployment.
+
+`analyze_failed_run` requires `consentToSendLogs: true`. The host/user must approve
+disclosure before calling it. A model response is not allowed to grant that consent.
+
+### Use from PowerShell through the MCP protocol
+
+From the `mcp-server` directory:
+
+```powershell
+$env:AZURE_OPENAI_ENDPOINT = "https://ai-pipeline-analysis-nbs.openai.azure.com/"
+$env:AZURE_OPENAI_DEPLOYMENT = "gpt-4.1-mini"
+$env:GITHUB_REPOSITORY = "nikhilbs-ciklum/ai-devops-mcp-platform"
+npm run analyze -- 40295005416 --allow-azure-log-upload
+```
+
+The CLI starts a short-lived MCP server, calls `analyze_failed_run`, prints JSON, and
+closes the connection. No long-lived HTTP service is exposed. Omit the consent flag
+and no logs are sent. The server itself can also be started with `npm start`, but
+it expects an MCP client on stdin; diagnostic output goes to stderr.
+
+### Data handling and troubleshooting
+
+Failed logs are downloaded locally with `gh`; common token, password, authorization,
+and credential-in-URL patterns are redacted before excerpt selection. Only up to
+24,000 characters are sent to Azure. Error context and log line labels are retained;
+truncation and excerpt counts are returned. The full raw log is not saved by this
+server. Redaction is best effort, **not a guarantee**: logs can contain private code
+or other sensitive content, so review the source logs and approve sending them.
+Inference incurs Azure usage charges. Treat logs and model output as untrusted.
+
+- `PermissionDenied`/HTTP 401 or 403: check the signed-in account/tenant, resource-scoped
+  inference role, and endpoint network restrictions. New RBAC grants can take time
+  to propagate; retry after propagation.
+- HTTP 404: check the resource endpoint and exact deployment name.
+- HTTP 429: check model quota and retry later; automatic retries are not performed.
+- Missing logs: check GitHub permissions and Actions log retention.
+- A tool error is returned explicitly; it is never replaced with a successful-looking
+  synthetic analysis.
+
+Run `npm test` for unit and real stdio protocol tests. Tests use mocked GitHub/Azure
+responses and do not spend Azure credits or require login. The `MCP server checks`
+workflow runs them on pushes and PRs that change the server.
+
+### Windows demo workstation checklist
+
+For an interactive VS Code demo, install **Git**, **Node.js 22 or newer**, **GitHub CLI**,
+**Azure CLI**, and **VS Code with Copilot/Agent support**. Restart the terminal after
+installation so the tools are on PATH. Android Studio, an Android SDK, and Java are
+only needed to build/run the Android app locally, not to analyze GitHub-hosted builds.
+
+From a PowerShell terminal in the repository root:
+
+```powershell
+git switch develop
+git pull --ff-only origin develop
+node --version
+gh auth login
+az login --tenant 9c8176a3-82ef-4e17-b391-373802f3d8d4
+az account set --subscription 64e8b0c5-e7ed-450d-a62d-8dd37014c788
+Set-Location .\mcp-server
+npm ci
+npm test
+```
+
+These commands assume the MCP PR has been merged into `develop`; until then use the
+PR feature branch. Start the server through **MCP: List Servers** for a chat demo,
+or run the documented CLI command for a historical failed run. No API key is needed.
+
+### Optional automatic analysis of failed develop builds
+
+[AI failure analysis](.github/workflows/ai-failure-analysis.yml) is a separate workflow
+triggered **after** `Android CI` completes. It only analyzes failed `push` or manual
+Android runs on `develop` in this repository; successful runs, PRs, and feature-branch
+runs are excluded. The workflow must be merged onto the default branch (`develop`)
+before GitHub can trigger it. It checks out trusted default-branch analyzer code,
+not the failed run's source, and never downloads or executes failed-build artifacts.
+
+The feature is **off by default**. You do not need to comment out YAML to hide it.
+Use **Settings > Secrets and variables > Actions > Variables**:
+
+| Repository variable | Value |
+| --- | --- |
+| `AI_FAILURE_ANALYSIS_ENABLED` | `true` for the demo; `false` otherwise |
+| `AZURE_OPENAI_ENDPOINT` | `https://ai-pipeline-analysis-nbs.openai.azure.com/` |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-4.1-mini` |
+| `AZURE_TENANT_ID` | `9c8176a3-82ef-4e17-b391-373802f3d8d4` |
+| `AZURE_SUBSCRIPTION_ID` | `64e8b0c5-e7ed-450d-a62d-8dd37014c788` |
+| `AZURE_CLIENT_ID` | Client ID of the dedicated federated application below |
+
+Enabling the variable is the repository administrator's consent to send bounded,
+best-effort redacted failed-job excerpts to this Azure deployment. Review what your
+logs contain before enabling it. Azure charges apply. To disable future analysis:
+
+```powershell
+gh variable set AI_FAILURE_ANALYSIS_ENABLED --body false
+```
+
+This does not cancel an analysis already running. Disabled or ineligible events can
+appear as skipped workflow jobs; no Azure call is made.
+
+#### One-time Azure OIDC setup (administrator)
+
+GitHub-hosted runners cannot use the Windows user's `az login` session. Create a
+dedicated Entra application with a service principal and a federated credential;
+do **not** create a client secret. These commands change Azure resources, so an
+authorized administrator should run them once after review. Entra application
+creation and role assignment permissions are required. Record the created app ID
+for future maintenance; do not rerun blindly if the application already exists.
+
+```powershell
+$clientId = az ad app create --display-name "ai-devops-pipeline-analysis" --query appId -o tsv
+if ($LASTEXITCODE -ne 0) { throw "Application creation failed" }
+$principalId = az ad sp create --id $clientId --query id -o tsv
+if ($LASTEXITCODE -ne 0) { throw "Service principal creation failed" }
+
+$federation = @{
+    name = "github-develop"
+    issuer = "https://token.actions.githubusercontent.com"
+    subject = "repo:nikhilbs-ciklum/ai-devops-mcp-platform:ref:refs/heads/develop"
+    audiences = @("api://AzureADTokenExchange")
+} | ConvertTo-Json
+$credentialFile = Join-Path $env:TEMP "ai-pipeline-federation.json"
+$federation | Set-Content -Path $credentialFile -Encoding ascii
+az ad app federated-credential create --id $clientId --parameters "@$credentialFile"
+if ($LASTEXITCODE -ne 0) { throw "Federated credential creation failed" }
+Remove-Item -LiteralPath $credentialFile
+
+$scope = "/subscriptions/64e8b0c5-e7ed-450d-a62d-8dd37014c788/resourceGroups/ITSD-178412/providers/Microsoft.CognitiveServices/accounts/ai-pipeline-analysis-nbs"
+az role assignment create --assignee-object-id $principalId --assignee-principal-type ServicePrincipal --role "Cognitive Services OpenAI User" --scope $scope
+if ($LASTEXITCODE -ne 0) { throw "Inference role assignment failed" }
+
+gh variable set AZURE_CLIENT_ID --body $clientId
+gh variable set AZURE_TENANT_ID --body "9c8176a3-82ef-4e17-b391-373802f3d8d4"
+gh variable set AZURE_SUBSCRIPTION_ID --body "64e8b0c5-e7ed-450d-a62d-8dd37014c788"
+gh variable set AZURE_OPENAI_ENDPOINT --body "https://ai-pipeline-analysis-nbs.openai.azure.com/"
+gh variable set AZURE_OPENAI_DEPLOYMENT --body "gpt-4.1-mini"
+gh variable set AI_FAILURE_ANALYSIS_ENABLED --body false
+```
+
+The subject is deliberately limited to `develop`. Do not change it to trust PRs or
+arbitrary branches. The identity receives resource-scoped inference permission, not
+subscription Contributor/Owner. `azure/login` allows login without subscription
+visibility because only inference access is required. Wait for role propagation
+before enabling the feature.
+
+#### Presenting the automatic demo
+
+1. Merge the PR and complete OIDC configuration above.
+2. Enable the variable: `gh variable set AI_FAILURE_ANALYSIS_ENABLED --body true`.
+3. Let an actual Android build fail on `develop` (push or manual run). Do not
+   deliberately commit a broken build to shared `develop` without team approval.
+   For a safe no-change demo, use the historical-run interactive MCP command instead.
+4. Open **Actions > AI failure analysis** after the Android run finishes.
+5. Show the **Summary** diagnosis/evidence and download the
+   `ai-failure-analysis-<run-id>` artifact containing `analysis.md` and `analysis.json`.
+6. Set the enable variable back to `false`.
+
+The original Android run stays failed. An analyzer/configuration failure also fails
+the analysis workflow explicitly; it does not produce a success-shaped report.
+Reports are retained for seven days and may contain private log excerpts/model
+output, so limit Actions access accordingly. This workflow does not analyze old runs
+merely because the variable was enabled.
