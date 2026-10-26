@@ -32,7 +32,7 @@ server.registerTool("list_failed_runs", {
 }, toolHandler(({ limit }) => listFailedRuns(config, limit)));
 
 server.registerTool("analyze_failed_run", {
-  description: `Analyze a failed run in ${config.repository}. Sends up to 24,000 characters of best-effort credential-redacted log excerpts to the configured Azure OpenAI deployment using the local Azure CLI login. Inference incurs Azure usage. Requires user consent to disclose log content. Returns suggestions only; never modifies code or runs.`,
+  description: `Analyze completed failed jobs by run ID, including an in-progress workflow, in ${config.repository}. Sends up to 24,000 log characters plus 12,000 commit-patch characters, redacted best effort, to Azure OpenAI using Azure CLI authentication. Requires user consent; inference incurs usage. Never modifies code or runs.`,
   inputSchema: {
     runId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     consentToSendLogs: z.literal(true).describe("Set true only after the user consents to sending log excerpts to Azure OpenAI."),

@@ -65,3 +65,14 @@ jobs:
             app/build/reports/lint-results-debug.*
           if-no-files-found: warn
           retention-days: 7
+
+  ai-failure-analysis:
+    needs: build
+    if: ${{ always() && !cancelled() && needs.build.result == 'failure' }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/ai-failure-analysis.yml
+    with:
+      run-id: ${{ github.run_id }}

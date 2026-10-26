@@ -1,27 +1,34 @@
 name: AI failure analysis
 
 on:
-  workflow_run:
-    workflows: ['Android CI']
-    types: [completed]
-    branches: [develop]
+  workflow_call:
+    inputs:
+      run-id:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: ai-analysis-${{ github.event.workflow_run.id }}
-  cancel-in-progress: false
-
 jobs:
+  skipped:
+    if: >-
+      vars.AI_FAILURE_ANALYSIS_ENABLED != 'true' ||
+      github.ref != 'refs/heads/develop' ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Explain analysis skip
+        run: |
+          echo 'AI analysis skipped: disabled or event/ref is outside the trusted develop OIDC scope. Fork PRs receive no Azure credentials or API calls.' >> "$GITHUB_STEP_SUMMARY"
+
   analyze:
     if: >-
       vars.AI_FAILURE_ANALYSIS_ENABLED == 'true' &&
-      github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.head_branch == 'develop' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
-    runs-on: ubuntu-24.04
+      github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -30,15 +37,19 @@ jobs:
     env:
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
       AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
-      FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+      AI_MAX_LOG_CHARS: ${{ vars.AI_MAX_LOG_CHARS || '24000' }}
+      AI_MAX_DIFF_CHARS: ${{ vars.AI_MAX_DIFF_CHARS || '12000' }}
+      FAILED_RUN_ID: ${{ inputs.run-id }}
     steps:
-      - name: Check out trusted default-branch analyzer
+      - name: Check out trusted develop analyzer
+        id: checkout
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Validate Azure configuration
+        id: configuration
         env:
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -53,6 +64,7 @@ jobs:
           done
 
       - name: Set up Node.js
+        id: node
         uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
@@ -60,10 +72,12 @@ jobs:
           cache-dependency-path: mcp-server/package-lock.json
 
       - name: Install MCP dependencies
+        id: dependencies
         working-directory: mcp-server
         run: npm ci --ignore-scripts
 
       - name: Sign in to Azure using OIDC
+        id: login
         uses: azure/login@v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -72,6 +86,7 @@ jobs:
           allow-no-subscriptions: true
 
       - name: Analyze failed Android run through MCP
+        id: analysis
         working-directory: mcp-server
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,14 +95,31 @@ jobs:
       - name: Upload AI analysis
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ai-failure-analysis-${{ github.event.workflow_run.id }}
+          name: ai-failure-analysis-${{ inputs.run-id }}
           path: ${{ runner.temp }}/ai-analysis/
           if-no-files-found: error
           retention-days: 7
 
       - name: Report analyzer failure
         if: failure()
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          CONFIGURATION: ${{ steps.configuration.outcome }}
+          NODE: ${{ steps.node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          LOGIN: ${{ steps.login.outcome }}
+          ANALYSIS: ${{ steps.analysis.outcome }}
         shell: bash
         run: |
-          echo '### AI analysis failed' >> "$GITHUB_STEP_SUMMARY"
-          echo 'No successful AI report was produced. Inspect this workflow for configuration, authentication, log-access, or model errors. The original Android run remains failed.' >> "$GITHUB_STEP_SUMMARY"
+          echo '### AI analysis unavailable' >> "$GITHUB_STEP_SUMMARY"
+          found=false
+          for stage in CHECKOUT CONFIGURATION NODE DEPENDENCIES LOGIN ANALYSIS; do
+            if [ "${!stage}" = 'failure' ]; then
+              found=true
+              printf 'Failure stage: %s. Check its task log for GitHub access, Azure authorization, or evidence availability errors.\n' "$stage" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          if [ "$found" = false ]; then
+            echo 'Report publication failed. Check the artifact upload task; a report may already be visible above.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo 'The original Android build remains failed. No successful analysis is implied by this note.' >> "$GITHUB_STEP_SUMMARY"
