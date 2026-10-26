@@ -8,12 +8,14 @@ on:
     paths:
       - 'mcp-server/**'
       - '.github/workflows/mcp.yml'
+      - '.github/workflows/ai-failure-analysis.yml'
   pull_request:
     branches:
       - develop
     paths:
       - 'mcp-server/**'
       - '.github/workflows/mcp.yml'
+      - '.github/workflows/ai-failure-analysis.yml'
   workflow_dispatch:
 
 permissions:
